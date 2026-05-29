@@ -52,9 +52,7 @@ def _norm_venue(raw: str) -> str:
     return _VENUE_NORM.get(base, base)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Recency weights  (used within 2019+ training window)
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def _year_weight(year: int) -> float:
     if year >= 2024: return 6.0
@@ -62,12 +60,10 @@ def _year_weight(year: int) -> float:
     if year == 2022: return 3.0
     if year == 2021: return 2.0
     if year == 2020: return 1.5
-    return 1.0   # 2019
+    return 1.0  
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Short-name → canonical-name alias builder  (4-pass, fully automatic)
-# ─────────────────────────────────────────────────────────────────────────────
+
 
 def _build_alias_map(players_df: pd.DataFrame,
                      pp_df: pd.DataFrame) -> dict:
@@ -90,7 +86,7 @@ def _build_alias_map(players_df: pd.DataFrame,
         players_df["Team"].astype(str).str.strip()
     ))
 
-    # Most common team per delivery name  (bat=batting team, bowl=bowling team)
+  
     def _mode(s):
         vc = s.value_counts()
         return _norm_team(vc.index[0]) if len(vc) else ""
@@ -103,7 +99,7 @@ def _build_alias_map(players_df: pd.DataFrame,
 
     all_dnames = set(dname_team.keys())
 
-    # surname + current_team + first_initial  ->  [canonical_name, ...]
+  
     by_s_t_fi: dict = {}
     for cn in canonical_names:
         parts = cn.split()
@@ -119,7 +115,7 @@ def _build_alias_map(players_df: pd.DataFrame,
         if len(parts) < 2:
             return []
         surname  = parts[-1]
-        initials = parts[0]        # e.g. "RG", "SA", "V", "MS"
+        initials = parts[0]       
         f_init   = initials[0]
         result   = []
         for cn in canonical_names:
@@ -129,7 +125,7 @@ def _build_alias_map(players_df: pd.DataFrame,
             if cparts[0][0] != f_init:
                 continue
             all_inits = "".join(cp[0] for cp in cparts[:-1])
-            # Accept if initials match in either direction (handles wrong extras like RG vs R)
+           
             if (initials == all_inits
                     or all_inits.startswith(initials)
                     or initials.startswith(all_inits)):
@@ -139,30 +135,30 @@ def _build_alias_map(players_df: pd.DataFrame,
     alias: dict = {}
 
     for dn in all_dnames:
-        # ── Pass 1: direct full-name match ────────────────────────────────────
+     
         if dn in canonical_names:
             alias[dn] = dn
             continue
 
-        # ── Pass 2: initials+surname (prefix flexible) ────────────────────────
+        
         cands = _initials_candidates(dn)
         if len(cands) == 1:
             alias[dn] = cands[0]
             continue
 
-        # ── Pass 3: team filter when initials are ambiguous ───────────────────
+        
         if len(cands) > 1:
             dt = dname_team.get(dn, "")
             tf = [c for c in cands if p_team.get(c, "") == dt]
             if len(tf) == 1:
                 alias[dn] = tf[0]
             elif tf:
-                alias[dn] = tf[0]   # still ambiguous → first candidate
+                alias[dn] = tf[0]  
             else:
                 alias[dn] = cands[0]
             continue
 
-        # ── Pass 4: surname + current-team + first-initial (handles SA Yadav) ─
+        
         dparts = dn.strip().split()
         if len(dparts) < 2:
             continue
@@ -172,7 +168,7 @@ def _build_alias_map(players_df: pd.DataFrame,
         if len(fb) == 1:
             alias[dn] = fb[0]
         elif len(fb) > 1:
-            alias[dn] = fb[0]   # ambiguous but best guess
+            alias[dn] = fb[0]   
 
     return alias
 
@@ -205,9 +201,6 @@ def _weighted_mean(v: np.ndarray, w: np.ndarray) -> float:
     return float((v * w).sum() / ws) if ws > 0 else float(v.mean())
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Model
-# ─────────────────────────────────────────────────────────────────────────────
 
 class MyModel:
     """
@@ -220,11 +213,11 @@ class MyModel:
     def __init__(self):
         self.model      = None
         self.avg_score  = None
-        self._boost_offset = 0.0    # calibration offset added post-prediction
+        self._boost_offset = 0.0   
 
         self._id_to_name : dict = {}
         self._alias_map  : dict = {}
-        self._bat_sr     : dict = {}    # canonical AND delivery name both stored
+        self._bat_sr     : dict = {}    
         self._bowl_econ  : dict = {}
         self._team_bat   : dict = {}
         self._team_bowl  : dict = {}
@@ -244,7 +237,7 @@ class MyModel:
     def _econ_for(self, name: str) -> float:
         return self._bowl_econ.get(name, self._g_bowl_econ)
 
-    # ── fit ───────────────────────────────────────────────────────────────────
+    
 
     def fit(self,
             deliveries_df: pd.DataFrame,
@@ -264,14 +257,14 @@ class MyModel:
         print(f"  Players    : {len(players_df):,} rows")
         print(f"  Matches    : {len(matches_df):,} rows")
 
-        # ── 1. Prep deliveries ────────────────────────────────────────────────
+
         deliveries_df = deliveries_df.copy()
         deliveries_df["date"]         = pd.to_datetime(deliveries_df["date"], errors="coerce")
         deliveries_df["year"]         = deliveries_df["date"].dt.year
         deliveries_df["batting_team"] = deliveries_df["batting_team"].apply(_norm_team)
         deliveries_df["bowling_team"] = deliveries_df["bowling_team"].apply(_norm_team)
 
-        # Venue from matches_df (authoritative)
+      
         matches_df = matches_df.copy()
         matches_df["venue_norm"] = matches_df["venue"].apply(_norm_venue)
         venue_map = (matches_df[["matchId", "venue_norm"]]
@@ -279,11 +272,10 @@ class MyModel:
                      .set_index("matchId")["venue_norm"])
         deliveries_df["venue"] = deliveries_df["matchId"].map(venue_map).fillna("Unknown")
 
-        # ── 2. Powerplay slice (ALL years for player SR coverage) ─────────────
+
         pp_all = deliveries_df[deliveries_df["over"] < 6].copy()
         pp_all["total_runs"] = pp_all["batsman_runs"] + pp_all["extras"]
 
-        # ── 3. Build alias map and ID→name map ────────────────────────────────
         self._id_to_name = _build_id_to_name(players_df)
         self._alias_map  = _build_alias_map(players_df, pp_all)
 
@@ -292,7 +284,6 @@ class MyModel:
         print(f"  Aliases built    : {len(self._alias_map):,} "
               f"({n_resolved}/{len(self._id_to_name)} current players mapped)")
 
-        # ── 4. Player PP stats (all years — maximise player coverage) ─────────
         bat_stats  = (pp_all.groupby("batsman", sort=False)
                       .agg(r=("batsman_runs", "sum"), b=("batsman_runs", "count"))
                       .eval("sr = r / b * 100"))
@@ -303,8 +294,7 @@ class MyModel:
         self._g_bat_sr    = float(bat_stats["sr"].mean())
         self._g_bowl_econ = float(bowl_stats["econ"].mean())
 
-        # Store under BOTH delivery name AND resolved canonical name
-        # so predict() lookups succeed via either form
+        
         self._bat_sr = {}
         for dn, sr in bat_stats["sr"].items():
             cn = self._resolve(dn)
@@ -320,20 +310,15 @@ class MyModel:
         print(f"  Stat coverage    : bat_sr {n_bat}/{len(self._id_to_name)}  "
               f"bowl_econ {n_bowl}/{len(self._id_to_name)}")
 
-        # ── 5. Training data: 2019+ only ──────────────────────────────────────
-        # Pre-2019 IPL (~43-47 PP runs) vs 2022-25 (~54-57 PP runs).
-        # Including old data makes tree splits learn the wrong environment.
         pp_train = pp_all[pp_all["year"] >= 2019].copy()
         pp_train["w"] = pp_train["year"].apply(_year_weight)
 
-        # ── 6. Innings-level PP totals ────────────────────────────────────────
         group_cols = ["matchId","inning","batting_team","bowling_team","venue","year"]
         pp_inn = (pp_train.groupby(group_cols, sort=False)
                   .agg(total_runs=("total_runs", "sum"))
                   .reset_index())
         pp_inn["w"] = pp_inn["year"].apply(_year_weight)
 
-        # ── 7. Weighted team / venue averages ─────────────────────────────────
         def _wm_grp(df, col):
             return {g: _weighted_mean(s["total_runs"].values, s["w"].values)
                     for g, s in df.groupby(col)}
@@ -349,7 +334,7 @@ class MyModel:
               f"(unweighted = {pp_inn['total_runs'].mean():.1f})")
         print(f"  Venues indexed   : {len(self._venue_avg):,}")
 
-        # ── 8. Feature matrix ─────────────────────────────────────────────────
+      
         mid_arr  = pp_train["matchId"].values
         inn_arr  = pp_train["inning"].values
         bat_arr  = pp_train["batsman"].values
@@ -367,16 +352,16 @@ class MyModel:
             ws = [self._econ_for(n) for n in w_names] or [g_w]
 
             rows.append([
-                self._team_bat.get(row.batting_team,  gp),   # 0 team_bat_avg
-                self._team_bowl.get(row.bowling_team, gp),   # 1 team_bowl_avg
-                float(np.mean(bs)),                           # 2 avg_bat_sr
-                float(max(bs)),                               # 3 top_bat_sr
-                float(np.mean(ws)),                           # 4 avg_bowl_econ
-                float(min(ws)),                               # 5 best_bowl_econ
-                float(row.inning),                            # 6 innings
-                self._venue_avg.get(row.venue, gp),           # 7 venue_pp_avg
-                float(row.w),           # sample weight (not a feature)
-                float(row.total_runs),  # target
+                self._team_bat.get(row.batting_team,  gp),   
+                self._team_bowl.get(row.bowling_team, gp),   
+                float(np.mean(bs)),                           
+                float(max(bs)),                               
+                float(np.mean(ws)),                        
+                float(min(ws)),                              
+                float(row.inning),                            
+                self._venue_avg.get(row.venue, gp),        
+                float(row.w),           
+                float(row.total_runs),  
             ])
 
         arr  = np.array(rows, dtype=np.float64)
@@ -386,7 +371,7 @@ class MyModel:
             X, y, sw, test_size=0.2, random_state=42
         )
 
-        # ── 9. XGBoost ────────────────────────────────────────────────────────
+      
         self.model = XGBRegressor(
             n_estimators=700,
             learning_rate=0.03,
@@ -407,12 +392,7 @@ class MyModel:
         val_raw  = self.model.predict(X_te)
         val_mae  = mean_absolute_error(y_te, val_raw)
 
-        # ── 10. External PP boost (calibration offset) ────────────────────────
-        # XGBoost predictions may still be anchored slightly below the modern
-        # era mean. We compute the gap between the weighted mean of 2022-25
-        # actual scores and the model's mean prediction on that same slice,
-        # then store it as a calibration offset added at predict time.
-        # This is derived entirely from data — not a hardcoded constant.
+ 
         recent_mask = pp_inn["year"] >= 2022
         if recent_mask.sum() > 0:
             X_recent = arr[recent_mask.values, :8]
@@ -425,7 +405,6 @@ class MyModel:
         else:
             self._boost_offset = 0.0
 
-        # Refit on full data with weights for deployment
         self.model.fit(X, y, sample_weight=sw, verbose=False)
 
         val_boosted = val_raw + self._boost_offset
@@ -438,7 +417,6 @@ class MyModel:
 
         return self
 
-    # ── predict ───────────────────────────────────────────────────────────────
 
     def predict(self, test_df: pd.DataFrame) -> pd.DataFrame:
         """
@@ -502,7 +480,7 @@ class MyModel:
             X_arr[i, 7] = self._venue_avg.get(nv, self._venue_avg.get(rv, gp))
 
         raw    = self.model.predict(X_arr) if self.model else np.full(n, gp)
-        # Apply calibration boost — shifts output toward modern era mean
+
         boosted = raw + self._boost_offset
         scores  = np.clip(np.round(boosted), 0, None).astype(int)
 
